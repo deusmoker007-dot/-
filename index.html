@@ -504,7 +504,26 @@ function applySnapshot(s) {
   while (pl.length < 2) pl.push(mk('#3ec9c0', true, 'Игрок'));
   for (let i = 0; i < 2; i++) {
     const d = s.p[i]; if (!d) continue;
-    if (net.role === 'guest' && i === 1) { net.snapP1 = d; continue; }
+    if (net.role === 'guest' && i === 1) {
+      // Свои физику/позицию гость считает локально, но HP, карты и характеристики
+      // берём с хоста, иначе HUD и прокачка у гостя остаются старыми.
+      net.snapP1 = d;
+      const own = pl[1];
+      Object.assign(own, {
+        name: d.name, color: d.color, fc: d.fc || own.fc, score: d.score,
+        hp: d.hp, mhp: d.mhp, cards: d.cards.slice(), s: d.s, mj: d.mj,
+        jumps: Math.min(own.jumps, d.jumps), barr: d.barr,
+        shield: d.shield,
+        bl: d.bl, hurt: d.hurt, slow: d.slow, burn: d.burn, kick: d.kick
+      });
+      // Страховка: если своя физика сломалась и координаты стали NaN,
+      // возвращаемся на авторитетную позицию хоста.
+      if (!Number.isFinite(own.x) || !Number.isFinite(own.y) || !Number.isFinite(own.vx) || !Number.isFinite(own.vy)) {
+        own.x = d.x; own.y = d.y; own.vx = d.vx; own.vy = d.vy; own.on = d.on;
+      }
+      if (!Number.isFinite(own.aim)) own.aim = d.aim;
+      continue;
+    }
     const old = pl[i];
     Object.assign(old, d, { human: true, in: { dir: 0, jump: false, shoot: false }, ai: { t: 0, s: 1 } });
     if (guestPrevOn[i] && !d.on && d.vy < -200) packApplyVisual({ k: 'jump' });
@@ -623,11 +642,11 @@ function startOnlineMatch() {
   toast('Матч начался. Удачи!'); cv.focus();
 }
 function guestStart(m) {
-  net.matchId=m.match; net.active=true; net.overPlayed=false; net.snaps=[]; net.events=[]; guestTrail.clear(); guestArena=-1;
-  Object.assign(cfg,m.cfg); setArena(); spawnBr(); guestArena=cfg.arena;
+  net.matchId=m.match; net.active=true; net.overPlayed=false; net.snaps=[]; net.events=[]; net.snapP1=null; guestTrail.clear(); guestArena=-1;
+  Object.assign(cfg,m.cfg); setArena(); guestArena=cfg.arena;
   const p0=profileFrom(m.profiles[0]), p1=profileFrom(m.profiles[1]);
   pl=[mk(COLS[p0.col],true,p0.name,p0),mk(COLS[p1.col],true,p1.name,p1)];
-  round=1; state='play'; ts=1; setPause(false); closeLobby(); toast('Матч начался. Удачи!'); cv.focus();
+  round=1; resetRound(); ts=1; setPause(false); closeLobby(); toast('Матч начался. Удачи!'); cv.focus();
 }
 
 /* ---- sound ---- */
@@ -686,8 +705,10 @@ const keys={}, mouse={x:W/2,y:H/2,down:false};
 function mpos(e){ const r=cv.getBoundingClientRect(); mouse.x=(e.clientX-r.left)*W/r.width; mouse.y=(e.clientY-r.top)*H/r.height; }
 function sendGuestInput(){
   if(!net.active||net.role!=='guest'||!net.connected) return;
-  const p=pl[1], dir=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0);
-  const aim=Math.atan2(mouse.y-(p.y+ph(p)/2),mouse.x-(p.x+pw(p)/2));
+  const p=pl[1]; if(!p||!Number.isFinite(p.x)||!Number.isFinite(p.y)) return;
+  const dir=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0);
+  let aim=Math.atan2(mouse.y-(p.y+ph(p)/2),mouse.x-(p.x+pw(p)/2));
+  if(!Number.isFinite(aim)) aim=Number.isFinite(p.aim)?p.aim:Math.PI;
   sendMsg({t:'input',seq:++net.inputSeq,dir,jump:pendingJump,shoot:mouse.down&&state==='play',aim,crouch:keys.KeyS?1:0,shield:pendingShield?1:0,match:net.matchId});
   pendingJump=false;pendingShield=false;
 }
